@@ -30,6 +30,21 @@ class Position {
     static isEqual(lhs, rhs) {
         return lhs.line === rhs.line && lhs.character === rhs.character;
     }
+
+    /**
+     * Compares two positions.
+     *
+     * @param {Position} lhs
+     * @param {Position} rhs
+     * @return {number} Negative if lhs is before rhs, positive if after, zero if equal.
+     */
+    static compare(lhs, rhs) {
+        if (lhs.line !== rhs.line) {
+            return lhs.line - rhs.line;
+        }
+
+        return lhs.character - rhs.character;
+    }
 }
 
 /**
@@ -48,31 +63,14 @@ class Range {
     }
 
     /**
-     * Checks for containment in the range.
+     * Checks for containment in the range. The end position is exclusive.
      *
      * @param {Position} position
      *
      * @returns {boolean} True if the given position is contained within the range.
      */
     contains(position) {
-        if (position.line < this.start.line) {
-            return false;
-        }
-        else if (position.line > this.end.line) {
-            return false;
-        }
-        else if (position.character < this.start.character) {
-            return false;
-        }
-        else if (position.character > this.end.character) {
-            return false;
-        }
-
-        if (Position.isEqual(position, this.end)) {
-            return false;
-        }
-
-        return true;
+        return Position.compare(position, this.start) >= 0 && Position.compare(position, this.end) < 0;
     }
 }
 

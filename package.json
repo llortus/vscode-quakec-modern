@@ -1,18 +1,28 @@
 {
 	"name": "quakec",
 	"displayName": "QuakeC",
-	"description": "QuakeC Intellisense, diagnostics, and code browsing.",
+	"description": "QuakeC IntelliSense, diagnostics, and code browsing, with support for gmqcc and FTEQCC language extensions.",
 	"author": "Joshua Skelton",
 	"license": "MIT",
-	"version": "0.2.3",
+	"version": "0.3.0",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/joshuaskelly/vscode-quakec"
 	},
 	"publisher": "joshuaskelly",
-	"categories": [],
+	"categories": [
+		"Programming Languages",
+		"Linters"
+	],
 	"icon": "images/icon.png",
-	"keywords": [],
+	"keywords": [
+		"quake",
+		"quakec",
+		"qc",
+		"gmqcc",
+		"fteqcc",
+		"idtech"
+	],
 	"engines": {
 		"node": "*",
 		"vscode": "^1.39.0"
@@ -30,9 +40,10 @@
 					"Quake-C",
 					"qcc"
 				],
-				"configuration": "./language-configuration.json",
+				"configuration": "./client/language-configuration.json",
 				"extensions": [
-					".qc"
+					".qc",
+					".qh"
 				]
 			}
 		],
@@ -40,7 +51,7 @@
 			{
 				"language": "quakec",
 				"scopeName": "source.qc",
-				"path": "./client/syntaxes/quakec.plist"
+				"path": "./client/syntaxes/quakec.tmLanguage.json"
 			}
 		],
 		"configuration": {
@@ -50,8 +61,18 @@
 				"quakec.language": {
 					"scope": "resource",
 					"type": "string",
-					"default": "qcc",
-					"description": "Controls parser support for various language features."
+					"enum": [
+						"gmqcc",
+						"fteqcc",
+						"qcc"
+					],
+					"enumDescriptions": [
+						"gmqcc's default standard (-std=gmqcc): const, C-style functions, for/switch, typedef, enum, arrays, attributes, and more.",
+						"gmqcc with -std=fteqcc: the same syntax, with FTEQCC's predefined macros.",
+						"gmqcc with -std=qcc: original QuakeC. Reports C-style functions and newer operators."
+					],
+					"default": "gmqcc",
+					"markdownDescription": "The QuakeC standard to check code against. Matches the `-std` option of gmqcc."
 				}
 			}
 		}

@@ -2,16 +2,8 @@ const assert = require("assert");
 const Lexer = require("../quakec-lexer").Lexer;
 
 describe("Lexer", function() {
-    let lexer;
-    beforeEach(function() {
-        lexer = Lexer();
-    });
-
-    afterEach(function() {
-        lexer = null;
-    });
-
     const all = function(program) {
+        const lexer = Lexer();
         lexer.setInput(program);
 
         const result = [];
@@ -22,693 +14,142 @@ describe("Lexer", function() {
             token = lexer.lex();
         }
 
+        result.errors = lexer.errors;
         return result;
     };
 
-    assert.tokensEqual = function(expected, actual) {
-        assert.equal(expected.type, actual.type, "Token types should be equal");
-        assert.equal(expected.value, actual.value, "Token values should be equal");
-        assert.equal(expected.position.line, actual.position.line, "Token line numbers should be equal.");
-        assert.equal(expected.position.character, actual.position.character, "Token character numbers should be equal.");
-    };
-
-    assert.tokenArraysEqual = function(expected, actual) {
-        assert.equal(expected.length, actual.length, "Number of tokens should be equal");
-
-        for (let i = 0; i < expected.length; i++) {
-            const e = expected[i];
-            const a = actual[i];
-
-            assert.tokensEqual(e, a);
-        }
+    // Compact form of a token list: "type:value" strings.
+    const summary = function(program) {
+        return all(program).map((t) => `${t.type}:${t.value}`);
     };
 
     describe("Literals", function() {
-        describe("Floats", function() {
-            it("Should handle floats", function() {
-                const program = `1.234`;
-                const expected = {
-                    type: "float",
-                    value: "1.234",
-                    position: {
-                        line: 0,
-                        character: 0
-                    }
-                };
-                lexer.setInput(program);
-                const actual = lexer.lex();
-
-                assert.tokensEqual(expected, actual);
-            });
-            it("Should handle negative floats", function() {
-                const program = `-1.234`;
-                const expected = [
-                    {
-                        type: "operator",
-                        value: "-",
-                        position: {
-                            line: 0,
-                            character: 0
-                        }
-                    },
-                    {
-                        type: "float",
-                        value: "1.234",
-                        position: {
-                            line: 0,
-                            character: 1
-                        }
-                    }
-                ];
-                lexer.setInput(program);
-                const actual = all(program);
-
-                assert.tokenArraysEqual(expected, actual);
-            });
-            it("Should handle int style floats", function() {
-                const program = `1`;
-                const expected = {
-                    type: "float",
-                    value: "1",
-                    position: {
-                        line: 0,
-                        character: 0
-                    }
-                };
-                lexer.setInput(program);
-                const actual = lexer.lex();
-
-                assert.tokensEqual(expected, actual);
-            });
-            it("Should handle negative int style floats", function() {
-                const program = `-10`;
-                const expected = [
-                    {
-                        type: "operator",
-                        value: "-",
-                        position: {
-                            line: 0,
-                            character: 0
-                        }
-                    },
-                    {
-                        type: "float",
-                        value: "10",
-                        position: {
-                            line: 0,
-                            character: 1
-                        }
-                    }
-                ];
-                lexer.setInput(program);
-                const actual = all(program);
-
-                assert.tokenArraysEqual(expected, actual);
-            });
+        it("Should handle floats", function() {
+            assert.deepStrictEqual(summary("1.234 1. .5 10 0x1F 2.5f"), [
+                "float:1.234", "float:1.", "float:.5", "float:10", "float:0x1F", "float:2.5f"
+            ]);
         });
-        describe("Vectors", function() {
-            it("Should handle vectors", function() {
-                const program = `'1.234 0 -4'`;
-                const expected = {
-                    type: "vector",
-                    value: "'1.234 0 -4'",
-                    position: {
-                        line: 0,
-                        character: 0
-                    }
-                };
-                lexer.setInput(program);
-                const actual = lexer.lex();
-
-                assert.tokensEqual(expected, actual);
-            });
+        it("Should lex a negative number as an operator and a number", function() {
+            assert.deepStrictEqual(summary("-1.234"), ["operator:-", "float:1.234"]);
         });
-        describe("Strings", function() {
-            it("Should handle strings", function() {
-                const program = `"hello world!"`;
-                const expected = {
-                    type: "string",
-                    value: `"hello world!"`,
-                    position: {
-                        line: 0,
-                        character: 0
-                    }
-                };
-                lexer.setInput(program);
-                const actual = lexer.lex();
-                assert.tokensEqual(expected, actual);
-            });
-            it("Should handle newlines", function() {
-                const program = `"\nhello world!\n"`;
-                const expected = {
-                    type: "string",
-                    value: `"\nhello world!\n"`,
-                    position: {
-                        line: 0,
-                        character: 0
-                    }
-                };
-                lexer.setInput(program);
-                const actual = lexer.lex();
-
-                assert.tokensEqual(expected, actual);
-            });
-            it("Should handle path style strings", function() {
-                const program = `"maps/jrwiz1.bsp"`;
-                const expected = {
-                    type: "string",
-                    value: `"maps/jrwiz1.bsp"`,
-                    position: {
-                        line: 0,
-                        character: 0
-                    }
-                };
-                lexer.setInput(program);
-                const actual = lexer.lex();
-                assert.tokensEqual(expected, actual);
-            });
+        it("Should report trailing characters after a number", function() {
+            const tokens = all("12abc");
+            assert.strictEqual(tokens.errors.length, 1);
         });
-        describe("Builtins", function() {
-            it("Should handle builtins", function() {
-                const program = `#1 #22`;
-                const expected = [
-                    {
-                        type: "builtin",
-                        value: "#1",
-                        position: {
-                            line: 0,
-                            character: 0
-                        }
-                    },
-                    {
-                        type: "builtin",
-                        value: "#22",
-                        position: {
-                            line: 0,
-                            character: 3
-                        }
-                    }
-                ];
-                const actual = all(program);
-
-                assert.tokenArraysEqual(expected, actual);
-            });
+        it("Should handle vectors", function() {
+            assert.deepStrictEqual(summary("'1.234 0 -4' ' 0 0 0 '"), ["vector:'1.234 0 -4'", "vector:' 0 0 0 '"]);
+        });
+        it("Should handle character constants", function() {
+            assert.deepStrictEqual(summary("'a' '\\n'"), ["char:'a'", "char:'\\n'"]);
+        });
+        it("Should handle strings", function() {
+            assert.deepStrictEqual(summary(`"hello world!" "maps/jrwiz1.bsp" "say \\"hi\\""`), [
+                `string:"hello world!"`, `string:"maps/jrwiz1.bsp"`, `string:"say \\"hi\\""`
+            ]);
+        });
+        it("Should handle strings that span lines", function() {
+            const tokens = all(`"\nhello world!\n" x`);
+            assert.strictEqual(tokens[0].type, "string");
+            assert.strictEqual(tokens[1].range.start.line, 2);
+        });
+        it("Should report unterminated strings", function() {
+            const tokens = all(`"hello`);
+            assert.strictEqual(tokens.errors.length, 1);
         });
     });
+
+    describe("Names", function() {
+        it("Should separate type names from other names", function() {
+            assert.deepStrictEqual(summary("void int float string entity vector const foo _bar2"), [
+                "type:void", "type:int", "type:float", "type:string", "type:entity", "type:vector",
+                "name:const", "name:foo", "name:_bar2"
+            ]);
+        });
+        it("Should handle field types as separate tokens", function() {
+            assert.deepStrictEqual(summary(".float ..vector"), ["operator:.", "type:float", "operator:.", "operator:.", "type:vector"]);
+        });
+    });
+
     describe("Operators", function() {
         it("Should handle all operators", function() {
-            const program = `&& || <= >= == != ! * / - + = . < > & | ; , $`;
-            const expected = [
-                {
-                    type: "operator",
-                    value: "&&",
-                    position: {
-                        line: 0,
-                        character: 0
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "||",
-                    position: {
-                        line: 0,
-                        character: 3
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "<=",
-                    position: {
-                        line: 0,
-                        character: 6
-                    }
-                },
-                {
-                    type: "operator",
-                    value: ">=",
-                    position: {
-                        line: 0,
-                        character: 9
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "==",
-                    position: {
-                        line: 0,
-                        character: 12
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "!=",
-                    position: {
-                        line: 0,
-                        character: 15
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "!",
-                    position: {
-                        line: 0,
-                        character: 18
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "*",
-                    position: {
-                        line: 0,
-                        character: 20
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "/",
-                    position: {
-                        line: 0,
-                        character: 22
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "-",
-                    position: {
-                        line: 0,
-                        character: 24
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "+",
-                    position: {
-                        line: 0,
-                        character: 26
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "=",
-                    position: {
-                        line: 0,
-                        character: 28
-                    }
-                },
-                {
-                    type: "operator",
-                    value: ".",
-                    position: {
-                        line: 0,
-                        character: 30
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "<",
-                    position: {
-                        line: 0,
-                        character: 32
-                    }
-                },
-                {
-                    type: "operator",
-                    value: ">",
-                    position: {
-                        line: 0,
-                        character: 34
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "&",
-                    position: {
-                        line: 0,
-                        character: 36
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "|",
-                    position: {
-                        line: 0,
-                        character: 38
-                    }
-                },
-                {
-                    type: "operator",
-                    value: ";",
-                    position: {
-                        line: 0,
-                        character: 40
-                    }
-                },
-                {
-                    type: "operator",
-                    value: ",",
-                    position: {
-                        line: 0,
-                        character: 42
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "$",
-                    position: {
-                        line: 0,
-                        character: 44
-                    }
-                }
+            const operators = [
+                "...", "<<=", ">>=", "<=>", "&~=", "[[", "==", "!=", "<=", ">=", "&&", "||", "++", "--",
+                "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<", ">>", "><", "**",
+                "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "~", "?", ":", ";",
+                ",", ".", "(", ")", "[", "]", "{", "}", "#"
             ];
-            const actual = all(program);
-
-            assert.tokenArraysEqual(expected, actual);
+            assert.deepStrictEqual(summary(operators.join(" ")), operators.map((op) => `operator:${op}`));
         });
-        it("Should handle grouping operators", function() {
-            const program = `( ) { } [ ]`;
-            const expected = [
-                {
-                    type: "operator",
-                    value: "(",
-                    position: {
-                        line: 0,
-                        character: 0
-                    }
-                },
-                {
-                    type: "operator",
-                    value: ")",
-                    position: {
-                        line: 0,
-                        character: 2
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "{",
-                    position: {
-                        line: 0,
-                        character: 4
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "}",
-                    position: {
-                        line: 0,
-                        character: 6
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "[",
-                    position: {
-                        line: 0,
-                        character: 8
-                    }
-                },
-                {
-                    type: "operator",
-                    value: "]",
-                    position: {
-                        line: 0,
-                        character: 10
-                    }
-                }
-            ];
-            const actual = all(program);
-
-            assert.tokenArraysEqual(expected, actual);
+        it("Should handle builtin numbers", function() {
+            assert.deepStrictEqual(summary("#1 #22"), ["operator:#", "float:1", "operator:#", "float:22"]);
+        });
+        it("Should handle digraphs and trigraphs", function() {
+            assert.deepStrictEqual(summary("<: :> <% %> ??( ??)"), [
+                "operator:[", "operator:]", "operator:{", "operator:}", "operator:[", "operator:]"
+            ]);
         });
     });
-    describe("Types", function() {
-        describe("Simple Types", function() {
-            it("Should handle simple types", function() {
-                const program = `void float vector string entity`;
-                const expected = [
-                    {
-                        type: "type",
-                        value: "void",
-                        position: {
-                            line: 0,
-                            character: 0
-                        }
-                    },
-                    {
-                        type: "type",
-                        value: "float",
-                        position: {
-                            line: 0,
-                            character: 5
-                        }
-                    },
-                    {
-                        type: "type",
-                        value: "vector",
-                        position: {
-                            line: 0,
-                            character: 11
-                        }
-                    },
-                    {
-                        type: "type",
-                        value: "string",
-                        position: {
-                            line: 0,
-                            character: 18
-                        }
-                    },
-                    {
-                        type: "type",
-                        value: "entity",
-                        position: {
-                            line: 0,
-                            character: 25
-                        }
-                    }
-                ];
-                const actual = all(program);
 
-                assert.tokenArraysEqual(expected, actual);
-            });
-        });
-
-        describe("Field Types", function() {
-            it("Should handle field types", function() {
-                const program = `.void .float .vector .string .entity`;
-                const expected = [
-                    {
-                        type: "type",
-                        value: ".void",
-                        position: {
-                            line: 0,
-                            character: 0
-                        }
-                    },
-                    {
-                        type: "type",
-                        value: ".float",
-                        position: {
-                            line: 0,
-                            character: 6
-                        }
-                    },
-                    {
-                        type: "type",
-                        value: ".vector",
-                        position: {
-                            line: 0,
-                            character: 13
-                        }
-                    },
-                    {
-                        type: "type",
-                        value: ".string",
-                        position: {
-                            line: 0,
-                            character: 21
-                        }
-                    },
-                    {
-                        type: "type",
-                        value: ".entity",
-                        position: {
-                            line: 0,
-                            character: 29
-                        }
-                    }
-                ];
-                const actual = all(program);
-
-                assert.tokenArraysEqual(expected, actual);
-            });
+    describe("Positions", function() {
+        it("Should track lines and characters", function() {
+            const tokens = all("float a;\n  a = 1;");
+            const a = tokens[3];
+            assert.strictEqual(a.value, "a");
+            assert.strictEqual(a.position.line, 1);
+            assert.strictEqual(a.position.character, 2);
+            assert.strictEqual(a.range.end.character, 3);
         });
     });
-    describe("Names", function() {
-        it("Should handle names", function() {
-            const program = `testname test_name testname0 testName_0`;
-            const expected = [
-                {
-                    type: "name",
-                    value: "testname",
-                    position: {
-                        line: 0,
-                        character: 0
-                    }
-                },
-                {
-                    type: "name",
-                    value: "test_name",
-                    position: {
-                        line: 0,
-                        character: 9
-                    }
-                },
-                {
-                    type: "name",
-                    value: "testname0",
-                    position: {
-                        line: 0,
-                        character: 19
-                    }
-                },
-                {
-                    type: "name",
-                    value: "testName_0",
-                    position: {
-                        line: 0,
-                        character: 29
-                    }
-                },
-            ];
-            const actual = all(program);
 
-            assert.tokenArraysEqual(expected, actual);
-        });
-    });
     describe("Comments", function() {
-        it("Should handle single line comments", function() {
-            const program = `
-            // This is a comment
-            var i = 0;
-            `;
-            const expected = {
-                type: "name",
-                value: "var",
-                position: {
-                    line: 2,
-                    character: 12
-                }
-            };
-            lexer.setInput(program);
-            const actual = lexer.lex();
-
-            assert.tokensEqual(expected, actual);
+        it("Should skip line and block comments", function() {
+            assert.deepStrictEqual(summary("a // comment\n/* block\ncomment */ b"), ["name:a", "name:b"]);
         });
-        it("Should handle multiline comments", function() {
-            const program = `
-            /*
-             * This is a comment!
-             */
-            var i = 0;
-            /* This is also a comment. */
-            `;
-            const expected = {
-                type: "name",
-                value: "var",
-                position: {
-                    line: 4,
-                    character: 12
-                }
-            };
-            lexer.setInput(program);
-            const actual = lexer.lex();
-
-            assert.tokensEqual(expected, actual);
+        it("Should report unterminated block comments", function() {
+            assert.strictEqual(all("/* never closed").errors.length, 1);
         });
     });
-    describe("ModelGen", function() {
+
+    describe("Preprocessor", function() {
+        it("Should lex directives and end them at the end of the line", function() {
+            assert.deepStrictEqual(summary("#define FOO 1\nfloat"), [
+                "directive:define", "name:FOO", "float:1", "eol:", "type:float"
+            ]);
+        });
+        it("Should allow whitespace between '#' and the directive name", function() {
+            assert.deepStrictEqual(summary("  #  ifdef FOO\n"), ["directive:ifdef", "name:FOO", "eol:"]);
+        });
+        it("Should continue directives over escaped newlines", function() {
+            assert.deepStrictEqual(summary("#define FOO \\\n 1\nx"), [
+                "directive:define", "name:FOO", "float:1", "eol:", "name:x"
+            ]);
+        });
+        it("Should only treat '##' as one token inside directives", function() {
+            assert.deepStrictEqual(summary("#define CAT(a, b) a ## b\n"), [
+                "directive:define", "name:CAT", "operator:(", "name:a", "operator:,", "name:b", "operator:)",
+                "name:a", "operator:##", "name:b", "eol:"
+            ]);
+        });
+    });
+
+    describe("Model generation commands", function() {
         it("Should handle frame definitions", function() {
-            const program = `$frame`;
-            const expected = {
-                type: "type",
-                value: "$frame",
-                position: {
-                    line: 0,
-                    character: 0
-                }
-            };
-
-            lexer.setInput(program);
-            const actual = lexer.lex();
-
-            assert.tokensEqual(expected, actual);
+            const tokens = all("$frame stand1 stand2\nfloat");
+            assert.strictEqual(tokens[0].type, "modelgen");
+            assert.strictEqual(tokens[0].value, "frame");
+            assert.deepStrictEqual(tokens[0].args.map((a) => a.value), ["stand1", "stand2"]);
+            assert.strictEqual(tokens[1].value, "float");
         });
-        it("Should ignore model name definitions", function() {
-            const program = `$modelname name`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore sprite name definitions", function() {
-            const program = `$spritename name`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore type definitions", function() {
-            const program = `$type type`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore load definitions", function() {
-            const program = `$load /test/sprites`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore name definitions", function() {
-            const program = `$name armor`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore directory definitions", function() {
-            const program = `$cd /test/models`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore flag definitions", function() {
-            const program = `$flags 8`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore origin definitions", function() {
-            const program = `$origin 0 0 0`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore scale definitions", function() {
-            const program = `$scale 1 1 1`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore base definitions", function() {
-            const program = `$base start`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
-        });
-        it("Should ignore skin definitions", function() {
-            const program = `$skin test`;
-            const actual = all(program);
-
-            assert.equal(actual.length, 0);
+        for (const command of ["modelname", "spritename", "type", "load", "cd", "flags", "origin", "scale", "base", "skin", "framegroupstart", "framegroupend"]) {
+            it(`Should consume the rest of a $${command} line`, function() {
+                const tokens = all(`$${command} some thing\nfloat`);
+                assert.strictEqual(tokens.length, 2);
+                assert.strictEqual(tokens[0].type, "modelgen");
+                assert.strictEqual(tokens[1].value, "float");
+            });
+        }
+        it("Should handle frame references", function() {
+            assert.deepStrictEqual(summary("$stand1"), ["frame:stand1"]);
         });
     });
 });

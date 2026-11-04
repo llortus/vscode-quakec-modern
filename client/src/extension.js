@@ -27,7 +27,7 @@ module.exports.activate = function(context) {
 		documentSelector: [{scheme: 'file', language: 'quakec'}],
 		synchronize: {
 			configurationSection: 'quakec',
-			fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
+			fileEvents: workspace.createFileSystemWatcher('**/{*.qc,*.qh,*.QC,*.QH,progs.src,PROGS.SRC}')
 		}
 	};
 

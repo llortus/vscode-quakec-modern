@@ -5,11 +5,12 @@ const {
 	IPCMessageWriter,
 	createConnection,
 	TextDocuments,
-	TextDocumentSyncKind
+	TextDocumentSyncKind,
+	FileChangeType
 } = require('vscode-languageserver');
 
 const { TextDocument } = require('vscode-languageserver-textdocument');
-const { SourceDocumentManager } = require('./language');
+const { SourceDocumentManager, DEFAULT_LANGUAGE } = require('./language');
 
 const connection = createConnection(new IPCMessageReader(process), new IPCMessageWriter(process));
 const documents = new TextDocuments(TextDocument);
@@ -52,8 +53,22 @@ const sendDiagnostics = function() {
 
 connection.onDidChangeConfiguration((change) => {
 	const settings = change.settings;
-	language = settings.quakec.language || "qcc";
+	language = (settings && settings.quakec && settings.quakec.language) || DEFAULT_LANGUAGE;
 	documentManager.setLanguage(language);
+	sendDiagnostics();
+});
+
+// Pick up changes made outside the editor, such as a git checkout.
+connection.onDidChangeWatchedFiles((params) => {
+	for (const change of params.changes) {
+		// Open documents are kept up to date by the editor.
+		if (documents.get(change.uri)) {
+			continue;
+		}
+
+		documentManager.reloadDocument(change.uri, change.type === FileChangeType.Deleted);
+	}
+
 	sendDiagnostics();
 });
 

@@ -4,9 +4,11 @@
  */
 
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
+const url = require("url");
 const parser = require("../../parser/quakec-parser");
+const { Macro } = require("../../parser/quakec-preprocessor");
+const { Lexer } = require("../../parser/quakec-lexer");
 const { TextDocument } = require('vscode-languageserver-textdocument');
 
 /** @typedef {import('vscode-languageserver').Diagnostic} Diagnostic*/
@@ -18,17 +20,28 @@ const { TextDocument } = require('vscode-languageserver-textdocument');
 /** @typedef {import('../../parser/quakec-parser').Program} Program */
 /** @typedef {import('../../parser/quakec-parser').Scope} Scope */
 
+/** Language standards, matching gmqcc's -std flag. */
+const LANGUAGES = ["gmqcc", "fteqcc", "qcc"];
+const DEFAULT_LANGUAGE = "gmqcc";
+
+/** Folders that never hold QuakeC sources worth scanning. */
+const SKIPPED_FOLDERS = new Set([".git", ".hg", ".svn", "node_modules", ".vscode-test"]);
+
 class DocumentCacheItem {
     /**
      * @param {number} version Document version.
      * @param {TextDocument} document TextDocument
+     * @param {string} uri Normalized path of the document.
      */
-    constructor(version, document) {
+    constructor(version, document, uri) {
         /** @type {number} */
         this.version = version || -1;
 
         /** @type {TextDocument} */
         this.document = document || null;
+
+        /** @type {string} */
+        this.uri = uri;
     }
 }
 
@@ -50,9 +63,25 @@ class ProgramCacheItem {
     }
 }
 
+/**
+ * Normalizes a language setting value.
+ *
+ * @param {string} language
+ * @return {string}
+ */
+const normalizeLanguage = function(language) {
+    language = (language || "").toLowerCase();
+
+    if (language === "fte") {
+        return "fteqcc";
+    }
+
+    return LANGUAGES.includes(language) ? language : DEFAULT_LANGUAGE;
+};
+
  /** @class SourceDocumentManager */
  module.exports.SourceDocumentManager = class SourceDocumentManager {
-    constructor(root) {
+    constructor(root, language) {
         /**
          * Path to the workspace root directory.
          * @type {string}
@@ -79,8 +108,23 @@ class ProgramCacheItem {
          * @type {string[]}
          */
         this.sourceOrder = [];
+
+        /**
+         * Macros defined in progs.src (FTEQCC style).
+         *
+         * @type {Map<string, Macro>}
+         */
+        this.projectMacros = new Map();
+
+        /**
+         * Documents that #include a given document.
+         *
+         * @type {Object.<string, Set<string>>}
+         */
+        this.includedBy = {};
+
         this.documentsParsed = 0;
-        this.language = "qcc";
+        this.language = normalizeLanguage(language);
         this.loadDocuments();
     }
 
@@ -110,12 +154,54 @@ class ProgramCacheItem {
         let documentCacheItem = this.getDocumentCacheItem(uri);
 
         // Update if not currently tracked or newer version
-        if (!documentCacheItem || documentCacheItem.version < document.version) {
-            documentCacheItem = new DocumentCacheItem(document.version, document);
+        if (!documentCacheItem || documentCacheItem.version < document.version || documentCacheItem.document.getText() !== document.getText()) {
+            documentCacheItem = new DocumentCacheItem(document.version, document, uri);
 
             this.setDocumentCacheItem(uri, documentCacheItem);
-            this.invalidateProgram(uri);
+
+            if (this.isProjectDocument(uri)) {
+                this.buildSourceOrder(document, uri);
+                this.invalidateProgramCache();
+            }
+            else if (this.isSourceDocument(uri)) {
+                if (!this.getProgramCacheItem(uri)) {
+                    this.setProgramCacheItem(uri, new ProgramCacheItem(uri, false, null));
+                }
+                this.invalidateProgram(uri);
+            }
+
             this.validateProgramCache();
+        }
+    }
+
+    /**
+     * Reloads a document from disk, after it changed outside the editor.
+     *
+     * @param {string} vscodeUri
+     * @param {boolean} deleted
+     */
+    reloadDocument(vscodeUri, deleted) {
+        const uri = this.fromVSCodeUri(vscodeUri);
+
+        if (!this.isSourceDocument(uri) && !this.isProjectDocument(uri)) {
+            return;
+        }
+
+        if (deleted) {
+            this.invalidateProgram(uri);
+            delete this.documents[uri.toLowerCase()];
+            delete this.programs[uri.toLowerCase()];
+            this.validateProgramCache();
+            return;
+        }
+
+        const document = this.readDocument(uri);
+
+        if (document) {
+            const existing = this.getDocument(uri);
+            if (!existing || existing.getText() !== document.getText()) {
+                this.updateDocument(TextDocument.create(this.toVSCodeUri(uri), document.languageId, (existing ? existing.version : 0) + 1, document.getText()));
+            }
         }
     }
 
@@ -161,20 +247,21 @@ class ProgramCacheItem {
 
         const location = program.getDefinition(request.position);
 
-        if (!location) {
+        if (!location || !location.uri) {
             return null;
         }
 
-        location.uri = this.toVSCodeUri(location.uri);
-
-        return location;
+        return {
+            uri: this.toVSCodeUri(location.uri),
+            range: location.range
+        };
     }
 
     /**
      * Reference request hander.
      *
      * @param {ReferenceParams} request A reference request.
-     * @return {Location} A Location object.
+     * @return {Location[]} Location objects.
      */
     getReferences(request) {
         const program = this.getProgram(request.textDocument.uri);
@@ -189,14 +276,60 @@ class ProgramCacheItem {
             return [];
         }
 
-        const programs = this.sourceOrder.map((uri) => this.getProgram(uri));
-        const nestedSymbols = programs.map(({symbols}) => symbols);
-        const flattenedSymbols = nestedSymbols.reduce((result, symbolArray) => result.concat(symbolArray), []);
-        const targetSymbols = flattenedSymbols.filter(({value}) => value === definition.value);
-        const references = targetSymbols.filter((symbol) => symbol.scope.find(symbol.value) === definition && symbol !== definition);
-        const locations = references.map((symbol) => {return {uri: this.toVSCodeUri(symbol.scope.uri), range: symbol.range};});
+        const includeDeclaration = !request.context || request.context.includeDeclaration !== false;
+        const target = definition.canonical;
+        const locations = [];
+        const seen = new Set();
+
+        for (const uri of this.allProgramUris()) {
+            const other = this.getProgram(uri);
+
+            if (!other) {
+                continue;
+            }
+
+            for (const symbol of other.symbols) {
+                if (!symbol.definition || symbol.definition.canonical !== target) {
+                    continue;
+                }
+
+                const isDeclaration = symbol.definition.declarations.some(
+                    (d) => d.range === symbol.range
+                );
+
+                if (isDeclaration && !includeDeclaration) {
+                    continue;
+                }
+
+                const key = `${uri}:${symbol.range.start.line}:${symbol.range.start.character}`;
+                if (seen.has(key)) {
+                    continue;
+                }
+                seen.add(key);
+
+                locations.push({ uri: this.toVSCodeUri(other.uri || uri), range: symbol.range });
+            }
+        }
 
         return locations;
+    }
+
+    /**
+     * Program uris, in source order first.
+     *
+     * @return {string[]}
+     */
+    allProgramUris() {
+        const ordered = this.sourceOrder.slice();
+        const inOrder = new Set(ordered.map((uri) => uri.toLowerCase()));
+
+        for (const key in this.programs) {
+            if (!inOrder.has(key)) {
+                ordered.push(this.programs[key].uri);
+            }
+        }
+
+        return ordered;
     }
 
     /**
@@ -219,10 +352,21 @@ class ProgramCacheItem {
             const diagnostic = {
                 range: error.range,
                 severity: error.severity,
-                message: error.message
+                message: error.message,
+                source: "quakec"
             };
 
             diagnostics.push(diagnostic);
+        }
+
+        for (const range of program.inactiveRanges || []) {
+            diagnostics.push({
+                range: range,
+                severity: 4,
+                message: "Inactive preprocessor block",
+                source: "quakec",
+                tags: [1]
+            });
         }
 
         return diagnostics;
@@ -236,17 +380,17 @@ class ProgramCacheItem {
     getDiagnosticsAll() {
         /** @type {PublishDiagnosticsParams[]} */
         const publishDiagnosticsParams = [];
-        for (const uri in this.documents) {
-            const document = this.getDocument(uri);
+        for (const key in this.documents) {
+            const item = this.documents[key];
 
-            if (document == null) {
+            if (!item || !item.document || !this.isSourceDocument(item.uri)) {
                 continue;
             }
 
-            const diagnostics = this.getDiagnostics(document);
+            const diagnostics = this.getDiagnostics(item.document);
             publishDiagnosticsParams.push(
                 {
-                    uri: this.toVSCodeUri(uri),
+                    uri: this.toVSCodeUri(item.uri),
                     diagnostics: diagnostics
                 }
             );
@@ -261,6 +405,8 @@ class ProgramCacheItem {
      * @param {string} language
      */
     setLanguage(language) {
+        language = normalizeLanguage(language);
+
         if (this.language !== language) {
             this.language = language;
             this.invalidateProgramCache();
@@ -283,10 +429,10 @@ class ProgramCacheItem {
         }
 
         if (!programCacheItem.isValid) {
-            this.validateProgram(uri, null);
+            this.validateProgramCache();
         }
 
-        return programCacheItem.program;
+        return this.getProgramCacheItem(uri).program;
     }
 
     /**
@@ -294,6 +440,7 @@ class ProgramCacheItem {
      */
     loadDocuments() {
         this.documents = {};
+        this.programs = {};
 
         /**
          * Helper function to walk a given directory.
@@ -303,14 +450,30 @@ class ProgramCacheItem {
          */
         const walk = function(dir) {
             let results = [];
-            const files = fs.readdirSync(dir);
+            let files;
+
+            try {
+                files = fs.readdirSync(dir);
+            }
+            catch (e) {
+                return results;
+            }
 
             for (const file of files) {
                 const uri = path.join(dir, file);
-                const stat = fs.statSync(uri);
+                let stat;
+
+                try {
+                    stat = fs.statSync(uri);
+                }
+                catch (e) {
+                    continue;
+                }
 
                 if (stat.isDirectory()) {
-                    results = results.concat(walk(uri));
+                    if (!SKIPPED_FOLDERS.has(file)) {
+                        results = results.concat(walk(uri));
+                    }
                 }
                 else {
                     results.push(uri);
@@ -335,11 +498,11 @@ class ProgramCacheItem {
             const document = this.loadDocument(uri);
 
             if (!document) {
-                return;
+                continue;
             }
 
             if (this.isProjectDocument(uri)) {
-                this.buildSourceOrder(document);
+                this.buildSourceOrder(document, uri);
             }
         }
 
@@ -360,7 +523,7 @@ class ProgramCacheItem {
             return null;
         }
 
-        const documentCacheItem = new DocumentCacheItem(document.version, document);
+        const documentCacheItem = new DocumentCacheItem(document.version, document, uri);
         this.setDocumentCacheItem(uri, documentCacheItem);
 
         if (this.isSourceDocument(uri)) {
@@ -378,7 +541,8 @@ class ProgramCacheItem {
      * @return {boolean} True if given uri a Quake C source document.
      */
     isSourceDocument(uri) {
-        return path.extname(uri) === ".qc";
+        const extension = path.extname(uri).toLowerCase();
+        return extension === ".qc" || extension === ".qh";
     }
 
     /**
@@ -388,7 +552,7 @@ class ProgramCacheItem {
      * @return {boolean} True if the given uri a Quake C source ordering.
      */
     isProjectDocument(uri) {
-        return path.win32.basename(uri) === "progs.src";
+        return path.win32.basename(uri).toLowerCase() === "progs.src";
     }
 
     /**
@@ -398,11 +562,14 @@ class ProgramCacheItem {
      * @return {TextDocument} A TextDocument object.
      */
     readDocument(uri) {
-        if (!fs.existsSync(uri)) {
+        let content;
+
+        try {
+            content = fs.readFileSync(uri, "utf8");
+        }
+        catch (e) {
             return null;
         }
-
-        const content = fs.readFileSync(uri, "utf8");
 
         let langId = "quakec";
         if (!this.isSourceDocument(uri)) {
@@ -416,68 +583,73 @@ class ProgramCacheItem {
      * Validate all Programs.
      */
     validateProgramCache() {
-        console.log("Validating AST Cache...");
         const start = new Date().getTime();
         this.documentsParsed = 0;
 
-        // Validate progs.src documents.
-        if (this.sourceOrder) {
-            console.log("  Validating progs.src sources");
-            let parentScope = null;
+        // Validate progs.src documents in order, chaining scopes and macros
+        // the way the compiler sees them.
+        let parentScope = null;
+        let macros = this.projectMacros.size > 0 ? this.initialMacros() : null;
 
-            for (let i = 0; i < this.sourceOrder.length; i++) {
-                const uri = this.sourceOrder[i];
+        for (const uri of this.sourceOrder) {
+            const program = this.validateProgram(uri, parentScope, macros);
 
-                const program = this.validateProgram(uri, parentScope);
-
-                // Chain document scopes.
-                if (program) {
-                    parentScope = program.scope;
-                }
+            if (program) {
+                parentScope = program.scope;
+                macros = program.macros;
             }
         }
 
         // Validate workspace documents.
+        const inOrder = new Set(this.sourceOrder.map((uri) => uri.toLowerCase()));
         const remaining = Object.values(this.programs)
-        .map(({uri}) => uri)
-        .filter((uri) => !this.sourceOrder.includes(uri));
+            .map(({uri}) => uri)
+            .filter((uri) => !inOrder.has(uri.toLowerCase()));
 
-        if (remaining) {
-            console.log("  Validating workspace sources");
-
-            for (const uri of remaining) {
-                this.validateProgram(uri);
-            }
+        for (const uri of remaining) {
+            this.validateProgram(uri, null, null);
         }
 
-        const elapsed = new Date().getTime() - start;
-        console.log(`Parsed ${this.documentsParsed} documents in ${elapsed} milliseconds`);
+        if (this.documentsParsed > 0) {
+            const elapsed = new Date().getTime() - start;
+            console.log(`Parsed ${this.documentsParsed} documents in ${elapsed} milliseconds`);
+        }
+    }
+
+    /**
+     * Predefined macros plus the ones defined in progs.src.
+     *
+     * @return {Map<string, Macro>}
+     */
+    initialMacros() {
+        const { createPredefinedMacros } = require("../../parser/quakec-preprocessor");
+        const macros = createPredefinedMacros(this.language);
+
+        for (const [name, macro] of this.projectMacros) {
+            macros.set(name, macro);
+        }
+
+        return macros;
     }
 
     /**
      * Validate the given document and return a Program object.
+     *
      * @param {string} uri Document uri string.
      * @param {Scope} parentScope Parent Scope object.
+     * @param {Map<string, Macro>} macros Macros defined before this document.
      * @return {Program} A Program object.
      */
-    validateProgram(uri, parentScope) {
+    validateProgram(uri, parentScope, macros) {
         let programCacheItem = this.getProgramCacheItem(uri);
 
         if (!programCacheItem) {
             return null;
         }
 
-        if (programCacheItem.isValid) {
-            const program = programCacheItem.program;
-            if (program.scope) {
-                program.scope.parent = parentScope || program.scope.parent;
-            }
-
-            return program;
-        }
-
-        if (programCacheItem && programCacheItem.program && programCacheItem.program.scope) {
-            parentScope = parentScope || programCacheItem.program.scope.parent;
+        // Already valid, or being parsed further up an #include chain.
+        if (programCacheItem.isValid || programCacheItem.parsing) {
+            return programCacheItem.program;
         }
 
         const document = this.getDocument(uri);
@@ -486,17 +658,28 @@ class ProgramCacheItem {
             return null;
         }
 
-        // Parse the document
+        programCacheItem.parsing = true;
+
         const parseInfo = {
             program: document.getText(),
-            uri: uri,
+            uri: programCacheItem.uri,
             parentScope: parentScope,
-            language: this.language
+            macros: macros,
+            language: this.language,
+            include: (includePath, fromUri) => this.resolveInclude(includePath, fromUri)
         };
-        console.log(`    Parsing ${path.win32.basename(uri)}`);
-        const program = parser.parse(parseInfo);
 
-        programCacheItem = new ProgramCacheItem(uri, true, program);
+        let program;
+
+        try {
+            program = parser.parse(parseInfo);
+        }
+        finally {
+            programCacheItem.parsing = false;
+        }
+
+        program.uri = programCacheItem.uri;
+        programCacheItem = new ProgramCacheItem(programCacheItem.uri, true, program);
         this.setProgramCacheItem(uri, programCacheItem);
 
         this.documentsParsed += 1;
@@ -505,63 +688,197 @@ class ProgramCacheItem {
     }
 
     /**
+     * Resolves an #include for the parser.
+     *
+     * @param {string} includePath The path as written in the source.
+     * @param {string} fromUri The including document.
+     * @return {{scope: Scope, macros: Map} | null}
+     */
+    resolveInclude(includePath, fromUri) {
+        const candidates = [path.resolve(path.dirname(fromUri), includePath)];
+
+        if (this.workspaceRoot) {
+            candidates.push(path.resolve(this.fromVSCodeUri(this.workspaceRoot), includePath));
+        }
+
+        for (const candidate of candidates) {
+            let item = this.getProgramCacheItem(candidate);
+
+            if (!item) {
+                if (!this.loadDocument(candidate) || !this.isSourceDocument(candidate)) {
+                    continue;
+                }
+                item = this.getProgramCacheItem(candidate);
+            }
+
+            const key = candidate.toLowerCase();
+            this.includedBy[key] = this.includedBy[key] || new Set();
+            this.includedBy[key].add(fromUri);
+
+            // Being parsed already: an include cycle.
+            if (item.parsing) {
+                return { scope: null, macros: new Map() };
+            }
+
+            const program = this.validateProgram(candidate, null, null);
+
+            if (!program) {
+                return { scope: null, macros: new Map() };
+            }
+
+            return { scope: program.scope, macros: program.macros };
+        }
+
+        return null;
+    }
+
+    /**
      * Invalidate all Program objects.
      */
     invalidateProgramCache() {
         for (const uri in this.programs) {
-            this.invalidateProgram(uri, false);
+            this.programs[uri].isValid = false;
         }
     }
 
     /**
-     * Invalidate a given document.
+     * Invalidate a given document, and everything that depends on it.
      *
      * @param {string} uri Document uri string.
      * @param {boolean} invalidateDownstream Invalidate all downstream programs?
      */
-    invalidateProgram(uri, invalidateDownstream = true) {
+    invalidateProgram(uri, invalidateDownstream = true, visited = new Set()) {
+        const key = uri.toLowerCase();
+
+        if (visited.has(key)) {
+            return;
+        }
+        visited.add(key);
+
         const programCacheItem = this.getProgramCacheItem(uri);
 
         if (!programCacheItem) {
             return;
         }
 
-        const program = programCacheItem.program;
+        programCacheItem.isValid = false;
 
-        if (!program) {
+        if (!invalidateDownstream) {
             return;
         }
 
-        programCacheItem.isValid = false;
-        this.setProgramCacheItem(uri, programCacheItem);
+        const index = this.sourceOrder.findIndex((other) => other.toLowerCase() === key);
 
-        if (invalidateDownstream && this.sourceOrder.includes(uri)) {
-            for (let i = this.sourceOrder.indexOf(uri); i < this.sourceOrder.length; i++) {
-                const uri = this.sourceOrder[i];
-                this.invalidateProgram(uri, false);
+        if (index >= 0) {
+            for (let i = index + 1; i < this.sourceOrder.length; i++) {
+                this.invalidateProgram(this.sourceOrder[i], true, visited);
             }
+        }
+
+        for (const includer of this.includedBy[key] || []) {
+            this.invalidateProgram(includer, true, visited);
         }
     }
 
     /**
      * Create a source ordering for the given progs.src document.
      *
+     * Supports the classic format (output file, then one source per line)
+     * and FTEQCC's #includelist ... #endlist blocks.
+     *
      * @param {TextDocument} progsSrcDocument
+     * @param {string} uri Normalized path of the progs.src document.
      */
-    buildSourceOrder(progsSrcDocument) {
-        if (!this.isProjectDocument(progsSrcDocument.uri)) {
+    buildSourceOrder(progsSrcDocument, uri) {
+        uri = uri || this.fromVSCodeUri(progsSrcDocument.uri);
+
+        if (!this.isProjectDocument(uri)) {
             return;
         }
 
-        let text = progsSrcDocument.getText();
-        text = text.replace(/\/\/.*/g, "");
-        this.sourceOrder = text.split(/\s+/).filter(sourceDoc => sourceDoc);
-        this.sourceOrder.shift();
+        const text = progsSrcDocument.getText().replace(/\/\*[\s\S]*?\*\//g, "");
+        const lines = text.split(/\r?\n/).map((line) => line.replace(/\/\/.*/, "").trim());
+        const directory = path.dirname(uri);
+        const sources = [];
+        const macros = new Map();
+        let sawOutput = false;
+        let inList = false;
+        const hasList = lines.some((line) => /^#\s*includelist\b/.test(line));
 
-        this.sourceOrder = this.sourceOrder.map(
-            function(sourceDoc) {
-                return path.join(path.dirname(progsSrcDocument.uri), sourceDoc);
-            });
+        for (const line of lines) {
+            if (!line) {
+                continue;
+            }
+
+            if (line.startsWith("#")) {
+                const directive = line.match(/^#\s*(\w+)\s*(.*)$/);
+
+                if (!directive) {
+                    continue;
+                }
+
+                if (directive[1] === "includelist") {
+                    inList = true;
+                }
+                else if (directive[1] === "endlist") {
+                    inList = false;
+                }
+                else if (directive[1] === "define") {
+                    const macro = this.parseDefine(directive[2]);
+                    if (macro) {
+                        macros.set(macro.name, macro);
+                    }
+                }
+                else if (directive[1] === "include" || directive[1] === "includelist") {
+                    const file = directive[2].replace(/^["<]|[">]$/g, "");
+                    if (file) {
+                        sources.push(file);
+                    }
+                }
+                continue;
+            }
+
+            if (hasList) {
+                if (inList) {
+                    sources.push(line.split(/\s+/)[0]);
+                }
+                continue;
+            }
+
+            // Classic format: the first entry is the output file.
+            if (!sawOutput) {
+                sawOutput = true;
+                continue;
+            }
+
+            sources.push(line.split(/\s+/)[0]);
+        }
+
+        this.projectMacros = macros;
+        this.sourceOrder = sources.map((sourceDoc) => path.join(directory, sourceDoc.replace(/\\/g, path.sep)));
+    }
+
+    /**
+     * Parses the text after `#define` in progs.src.
+     *
+     * @param {string} text
+     * @return {Macro | null}
+     */
+    parseDefine(text) {
+        const lexer = Lexer();
+        lexer.setInput(text);
+        const tokens = [];
+        let token;
+
+        while ((token = lexer.lex())) {
+            tokens.push(token);
+        }
+
+        if (tokens.length === 0 || (tokens[0].type !== "name" && tokens[0].type !== "type")) {
+            return null;
+        }
+
+        return new Macro(tokens[0].value, null, false, tokens.slice(1));
     }
 
     /**
@@ -605,38 +922,39 @@ class ProgramCacheItem {
     }
 
     /**
-     * Normalize VS Code uri strings.
+     * Converts a VS Code uri string to a file system path.
      *
-     * @param {string} uri Document uri string.
-     * @return {string} Normalized uri string.
+     * @param {string} uri Document uri string, or a path.
+     * @return {string} Normalized path.
      */
     fromVSCodeUri(uri) {
-        uri = uri.replace(/file:[\\/]+/, "");
-        const osType = os.type();
-
-        if (osType === "Windows_NT") {
-            uri = uri.replace("%3A", ":");
-        }
-        else {
-            uri = path.posix.sep + uri;
+        if (/^file:/i.test(uri)) {
+            try {
+                return path.normalize(url.fileURLToPath(uri));
+            }
+            catch (e) {
+                // Fall through for malformed uris.
+            }
         }
 
         return path.normalize(uri);
     }
 
     /**
-     * Convert normalized string to the format VS Code expects.
-     * @param {string} uri Document string uri.
+     * Converts a file system path to the uri format VS Code expects.
+     *
+     * @param {string} uri A path, or an existing uri.
      * @return {string} VS Code specific uri string.
      */
     toVSCodeUri(uri) {
-        uri = uri.replace(/\\/g, path.posix.sep);
-        const osType = os.type();
-
-        if (osType === "Windows_NT") {
-            return "file:" + path.posix.sep + uri;
+        if (/^file:/i.test(uri)) {
+            return uri;
         }
 
-        return "file:" + path.posix.sep + path.posix.sep + uri;
+        return url.pathToFileURL(uri).href;
     }
 };
+
+module.exports.LANGUAGES = LANGUAGES;
+module.exports.DEFAULT_LANGUAGE = DEFAULT_LANGUAGE;
+module.exports.normalizeLanguage = normalizeLanguage;
