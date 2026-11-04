@@ -2,6 +2,8 @@
 
 A Visual Studio Code extension for the QuakeC language, including IntelliSense, diagnostics, and code navigation. It understands the modern QuakeC accepted by [gmqcc](https://github.com/graphitemaster/gmqcc), as well as original QuakeC.
 
+This is a fork of [vscode-quakec](https://github.com/joshuaskelly/vscode-quakec) by [Joshua Skelton](https://github.com/joshuaskelly), which provided the original language server, IntelliSense, and code navigation. This fork adds support for gmqcc and other modern QuakeC compilers.
+
 ## Features
 - **Diagnostics**: syntax errors as you type, checked against the same grammar gmqcc uses.
 - **Hover**: the type of any variable, field, function, or parameter, plus the value of constants, enum members, frames, and macros.
@@ -50,3 +52,7 @@ The extension reads `progs.src` to learn the order your files compile in, which 
 - Contributions are always welcome!
 - Any and all feedback is appreciated and welcome!
 - If someone has already filed an issue that encompasses your feedback, please leave a 👍/👎 reaction on the issue
+
+## Credits
+- Original extension by [Joshua Skelton](https://github.com/joshuaskelly): [joshuaskelly/vscode-quakec](https://github.com/joshuaskelly/vscode-quakec), released under the MIT license.
+- Language rules follow [gmqcc](https://github.com/graphitemaster/gmqcc) by Dale Weiler, Wolfgang Bumiller, and contributors.
