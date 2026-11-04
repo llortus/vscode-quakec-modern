@@ -1,0 +1,28 @@
+# Files left out of the published extension package.
+
+# Development and CI
+.github/**
+.vscode/**
+**/.vscode/**
+.vscode-test/**
+.media/**
+.gitignore
+**/.eslintrc
+**/.vscodeignore
+**/package-lock.json
+*.vsix
+
+# Tests
+**/test/**
+server/src/test-fixtures/**
+
+# Client dependencies: keep only what the extension loads at runtime,
+# not the test tooling.
+client/node_modules/**
+!client/node_modules/semver/**
+!client/node_modules/vscode-jsonrpc/**
+!client/node_modules/vscode-languageclient/**
+!client/node_modules/vscode-languageserver-protocol/**
+!client/node_modules/vscode-languageserver-types/**
+**/node_modules/.package-lock.json
+**/node_modules/.bin/**

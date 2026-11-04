@@ -1,8 +1,8 @@
-# VS Code QuakeC Extension
+# QuakeC Modern
 
 A Visual Studio Code extension for the QuakeC language, including IntelliSense, diagnostics, and code navigation. It understands the modern QuakeC accepted by [gmqcc](https://github.com/graphitemaster/gmqcc), as well as original QuakeC.
 
-This is a fork of [vscode-quakec](https://github.com/joshuaskelly/vscode-quakec) by [Joshua Skelton](https://github.com/joshuaskelly), which provided the original language server, IntelliSense, and code navigation. This fork adds support for gmqcc and other modern QuakeC compilers.
+QuakeC Modern is a fork of [vscode-quakec](https://github.com/joshuaskelly/vscode-quakec) by [Joshua Skelton](https://github.com/joshuaskelly), which provided the original language server, IntelliSense, and code navigation. QuakeC Modern adds support for gmqcc and other modern QuakeC compilers.
 
 ## Features
 - **Diagnostics**: syntax errors as you type, checked against the same grammar gmqcc uses.
@@ -44,15 +44,22 @@ The extension reads `progs.src` to learn the order your files compile in, which 
 
 ## Development
 - `npm install` installs dependencies for the client, server, and parser.
-- `npx mocha parser/test` runs the parser tests.
 - Press F5 in VS Code to launch an Extension Development Host.
+- `npm test` runs the parser tests and the VS Code integration test.
+- `npm run package` builds a `.vsix` file you can install with **Extensions: Install from VSIX...**.
+
+### Releasing
+1. Update `version` in `package.json` and add an entry to `CHANGELOG.md`.
+2. Create a GitHub release with a tag matching the version, such as `v0.3.1`.
+3. The `Publish` workflow tests the extension and publishes it to the VS Code Marketplace.
 
 ## Questions, issues, feature requests, and contributions
-- If you come across a problem with the extension, please [file an issue](https://github.com/joshuaskelly/vscode-quakec).
+- If you come across a problem with the extension, please [file an issue](https://github.com/llortus/vscode-quakec-modern/issues).
 - Contributions are always welcome!
 - Any and all feedback is appreciated and welcome!
 - If someone has already filed an issue that encompasses your feedback, please leave a 👍/👎 reaction on the issue
 
 ## Credits
+- QuakeC Modern is maintained by [Llortus](https://github.com/llortus).
 - Original extension by [Joshua Skelton](https://github.com/joshuaskelly): [joshuaskelly/vscode-quakec](https://github.com/joshuaskelly/vscode-quakec), released under the MIT license.
 - Language rules follow [gmqcc](https://github.com/graphitemaster/gmqcc) by Dale Weiler, Wolfgang Bumiller, and contributors.

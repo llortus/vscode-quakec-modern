@@ -31,7 +31,7 @@ module.exports.activate = function(context) {
 		}
 	};
 
-	client = new LanguageClient('quakec', 'QuakeC Language Server', serverOptions, clientOptions);
+	client = new LanguageClient('quakec', 'QuakeC Modern Language Server', serverOptions, clientOptions);
 	client.start();
 };
 

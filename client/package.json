@@ -1,13 +1,15 @@
 {
-	"name": "vscode-quakec",
-	"description": "QuakeC VS Code extension",
-	"author": "Joshua Skelton",
+	"name": "quakec-modern-client",
+	"description": "QuakeC Modern VS Code extension client.",
+	"author": "Llortus",
+	"contributors": [
+		"Joshua Skelton (https://github.com/joshuaskelly)"
+	],
 	"license": "MIT",
 	"version": "0.1.0",
-	"publisher": "Joshua Skelton",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/JoshuaSkelly/vscode-quakec"
+		"url": "https://github.com/llortus/vscode-quakec-modern"
 	},
 	"engines": {
 		"vscode": "^1.43.0"

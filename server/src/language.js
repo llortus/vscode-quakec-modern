@@ -1,6 +1,6 @@
 /**
  * @file Common classes for working with language source documents
- * @author Joshua Skelton
+ * @author Joshua Skelton (original), Llortus
  */
 
 const fs = require("fs");

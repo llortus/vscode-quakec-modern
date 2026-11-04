@@ -1,15 +1,22 @@
 {
-	"name": "quakec",
-	"displayName": "QuakeC",
+	"name": "quakec-modern",
+	"displayName": "QuakeC Modern",
 	"description": "QuakeC IntelliSense, diagnostics, and code browsing, with support for gmqcc and FTEQCC language extensions.",
-	"author": "Joshua Skelton",
+	"author": "Llortus",
+	"contributors": [
+		"Joshua Skelton (https://github.com/joshuaskelly)"
+	],
 	"license": "MIT",
 	"version": "0.3.0",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/joshuaskelly/vscode-quakec"
+		"url": "https://github.com/llortus/vscode-quakec-modern"
 	},
-	"publisher": "joshuaskelly",
+	"bugs": {
+		"url": "https://github.com/llortus/vscode-quakec-modern/issues"
+	},
+	"homepage": "https://github.com/llortus/vscode-quakec-modern#readme",
+	"publisher": "Llortus",
 	"categories": [
 		"Programming Languages",
 		"Linters"
@@ -78,13 +85,17 @@
 		}
 	},
 	"scripts": {
-		"deploy": "vsce publish --yarn",
 		"postinstall": "cd client && npm install && cd ../server && npm install && cd ../parser && npm install && cd ..",
-		"test": "mocha */test/**/*.js && node ./server/src/test/runTests.js"
+		"test": "npm run test:unit && npm run test:integration",
+		"test:unit": "mocha \"*/test/**/*.js\"",
+		"test:integration": "node ./server/src/test/runTests.js",
+		"package": "vsce package",
+		"deploy": "vsce publish"
 	},
 	"devDependencies": {
-		"mocha": "^8.4.0",
-		"vsce": "^1.103.1",
-		"vscode-test": "^1.6.1"
+		"@vscode/test-electron": "^3.1.0",
+		"@vscode/vsce": "^4.1.0",
+		"glob": "^7.2.3",
+		"mocha": "^8.4.0"
 	}
 }

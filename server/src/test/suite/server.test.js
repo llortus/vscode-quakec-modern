@@ -1,6 +1,9 @@
 const assert = require('assert');
 const vscode = require('vscode');
 const path = require('path');
+const manifest = require('../../../../package.json');
+
+const extensionId = `${manifest.publisher}.${manifest.name}`;
 
 suite('Language Server Test Suite', () => {
     test('Hover Provider Test', (done) => {
@@ -20,7 +23,7 @@ suite('Language Server Test Suite', () => {
             .then(() => {
                 // Verify extension is intalled and loaded.
                 return new Promise((resolve) => {
-                    const extension = vscode.extensions.getExtension('joshuaskelly.quakec');
+                    const extension = vscode.extensions.getExtension(extensionId);
                     assert(extension, 'Extension is not installed!');
                     assert(extension.isActive, 'Extension is not active!');
                     resolve();
