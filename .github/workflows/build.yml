@@ -13,9 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS is pinned because the macos-latest label sometimes fails to
-        # find a runner while GitHub moves it to a newer image.
-        os: [macos-15, ubuntu-latest, windows-latest]
+        # macOS is left out because its hosted runners never picked up the
+        # job. The extension is plain JavaScript, so Linux and Windows cover it.
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
